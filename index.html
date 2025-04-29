@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simple Wallet Login</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js" type="application/javascript"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #login, #main { max-width: 400px; margin: auto; }
+    #leaderboard, #profile { margin-top: 20px; }
+    .hidden { display: none; }
+    button { padding: 10px 20px; margin-top: 10px; }
+    input { width: 100%; padding: 8px; margin-top: 5px; }
+    ul { list-style: none; padding: 0; }
+    li { margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <h2>Login with Metamask</h2>
+    <input type="text" id="username" placeholder="Choose a unique username" autocomplete="username" />
+    <button id="loginBtn">Login</button>
+    <p id="loginMsg"></p>
+  </div>
+
+  <div id="main" class="hidden">
+    <h2>Main Page</h2>
+    <div id="profile">
+      <h3>Your Profile</h3>
+      <p><strong>Username:</strong> <span id="profileUsername"></span></p>
+      <p><strong>Points:</strong> <span id="profilePoints"></span></p>
+      <p><strong>Wallet Age (days):</strong> <span id="profileWalletAge"></span></p>
+      <button id="logoutBtn">Logout</button>
+    </div>
+
+    <div id="leaderboard">
+      <h3>Leaderboard</h3>
+      <ul id="leaderboardList"></ul>
+    </div>
+  </div>
+
+  <script>
+    const loginDiv = document.getElementById('login');
+    const mainDiv = document.getElementById('main');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const loginMsg = document.getElementById('loginMsg');
+    const usernameInput = document.getElementById('username');
+    const profileUsername = document.getElementById('profileUsername');
+    const profilePoints = document.getElementById('profilePoints');
+    const profileWalletAge = document.getElementById('profileWalletAge');
+    const leaderboardList = document.getElementById('leaderboardList');
+
+    let token = null;
+
+    async function login() {
+      if (!window.ethereum) {
+        loginMsg.textContent = 'Please install Metamask!';
+        return;
+      }
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const address = accounts[0];
+      const username = usernameInput.value.trim();
+      if (!username) {
+        loginMsg.textContent = 'Please enter a username.';
+        return;
+      }
+
+      try {
+        // Get nonce
+        const nonceRes = await fetch('/auth/nonce', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address, username })
+        });
+        const { nonce } = await nonceRes.json();
+
+        // Sign nonce
+        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        const signer = provider.getSigner();
+        let signature;
+        try {
+          signature = await signer.signMessage(`Login nonce: ${nonce}`);
+        } catch (signErr) {
+          if (signErr.code === 4001) { // User rejected the signature request
+            loginMsg.textContent = 'You must sign the message to login.';
+            return;
+          } else {
+            throw signErr;
+          }
+        }
+
+        // Verify signature and login
+        const verifyRes = await fetch('/auth/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address, signature })
+        });
+        const verifyData = await verifyRes.json();
+        if (!verifyRes.ok) {
+          loginMsg.textContent = verifyData.error || 'Login failed';
+          return;
+        }
+        token = verifyData.token;
+        // Save token to localStorage for later use
+        localStorage.setItem('token', token);
+        loginMsg.textContent = '';
+        showMainPage();
+      } catch (err) {
+        loginMsg.textContent = 'Error during login: ' + err.message;
+      }
+    }
+
+    async function showMainPage() {
+      loginDiv.classList.add('hidden');
+      mainDiv.classList.remove('hidden');
+
+      // Fetch main data
+      const res = await fetch('/main', {
+        headers: { Authorization: 'Bearer ' + token }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        loginMsg.textContent = data.error || 'Failed to load main data';
+        loginDiv.classList.remove('hidden');
+        mainDiv.classList.add('hidden');
+        return;
+      }
+
+      profileUsername.textContent = data.user.username || 'N/A';
+      profilePoints.textContent = data.user.points || 0;
+      profileWalletAge.textContent = data.user.walletAge || 'N/A';
+
+      leaderboardList.innerHTML = '';
+      data.leaderboard.forEach(user => {
+        const li = document.createElement('li');
+        li.textContent = `${user.username} - Points: ${user.points} - Wallet Age: ${user.walletAge} days`;
+        leaderboardList.appendChild(li);
+      });
+    }
+
+    logoutBtn.addEventListener('click', () => {
+      token = null;
+      loginDiv.classList.remove('hidden');
+      mainDiv.classList.add('hidden');
+      usernameInput.value = '';
+    });
+
+    loginBtn.addEventListener('click', login);
+  </script>
+</body>
+</html>

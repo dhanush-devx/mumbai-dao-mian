@@ -1,24 +1,17 @@
-const { Sequelize } = require('sequelize');
-
-const sequelize = new Sequelize(
-  process.env.MYSQL_DATABASE,
-  process.env.MYSQL_USER,
-  process.env.MYSQL_PASSWORD,
-  {
-    host: process.env.MYSQL_HOST || 'localhost',
-    dialect: 'mysql',
-    logging: false,
-  }
-);
+const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    await sequelize.authenticate();
-    console.log('MySQL connection has been established successfully.');
+    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/mumbai_dao', {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log(`MongoDB connected: ${conn.connection.host}`);
+    return conn;
   } catch (error) {
-    console.error('Unable to connect to the MySQL database:', error);
+    console.error('Error connecting to MongoDB:', error.message);
     process.exit(1);
   }
 };
 
-module.exports = { sequelize, connectDB };
+module.exports = { connectDB, mongoose };

@@ -11,7 +11,7 @@ class PointsCalculator {
 
   async updateAllPoints() {
     try {
-      const users = await User.findAll();
+      const users = await User.find({});
       for (const user of users) {
         const walletPoints = this.calculateWalletPoints(user.walletCreation);
         let socialPoints = 0;

@@ -1,24 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { verifyMessage } = require('ethers');
+const { ethers } = require('ethers');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const ActivityLogger = require('../services/activityLogger');
+const ErrorHandler = require('../utils/errorHandler');
 
 // POST /auth/nonce - generate nonce for Metamask login challenge
 router.post('/nonce', async (req, res) => {
-  const { address, username } = req.body;
-  if (!address) return res.status(400).json({ error: 'Address is required' });
-
-  const nonce = Math.floor(Math.random() * 1000000);
   try {
-    let user = await User.findOne({ where: { address: address.toLowerCase() } });
+    const { address, username } = req.body;
+    if (!address) {
+      return res.status(400).json({ error: 'Address is required' });
+    }
+
+    const nonce = Math.floor(Math.random() * 1000000);
+    
+    let user = await User.findOne({ address: address.toLowerCase() });
+    
     if (user) {
       user.nonce = nonce;
       // Update username if provided and different
       if (username && username !== user.username) {
         // Check if username is unique
-        const existingUser = await User.findOne({ where: { username } });
+        const existingUser = await User.findOne({ username });
         if (existingUser && existingUser.address.toLowerCase() !== address.toLowerCase()) {
           return res.status(400).json({ error: 'Username already taken' });
         }
@@ -28,17 +34,23 @@ router.post('/nonce', async (req, res) => {
     } else {
       // Check if username is unique before creating
       if (username) {
-        const existingUser = await User.findOne({ where: { username } });
+        const existingUser = await User.findOne({ username });
         if (existingUser) {
           return res.status(400).json({ error: 'Username already taken' });
         }
       }
-      user = await User.create({ address: address.toLowerCase(), nonce, username: username || null });
+      user = await User.create({ 
+        address: address.toLowerCase(), 
+        nonce, 
+        username: username || null,
+        walletCreation: new Date()  // Set wallet creation date for new users
+      });
     }
-    res.json({ nonce });
+    
+    return res.status(200).json({ nonce });
   } catch (err) {
     console.error('Error in /auth/nonce:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    return res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
@@ -50,19 +62,35 @@ router.post('/verify', async (req, res) => {
     }
 
     // Find user by address
-    const user = await User.findOne({ where: { address: address.toLowerCase() } });
+    const user = await User.findOne({ address: address.toLowerCase() });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // Make sure nonce exists
+    if (user.nonce === null) {
+      return res.status(400).json({ error: 'Invalid login attempt. Please request a new nonce.' });
+    }
+
     // Construct the message that was signed
     const message = `Login nonce: ${user.nonce}`;
+    console.log(`Verifying signature for message: "${message}" from address: ${address}`);
 
-    // Verify the signature using ethers.js
-    const signerAddr = verifyMessage(message, signature);
+    try {
+      // Recover the address from the signature
+      const recoveredAddress = ethers.utils.verifyMessage(message, signature);
+      console.log(`Recovered address: ${recoveredAddress}`);
 
-    if (signerAddr.toLowerCase() !== address.toLowerCase()) {
-      return res.status(401).json({ error: 'Signature verification failed' });
+      // Check if the recovered address matches the provided address
+      if (recoveredAddress.toLowerCase() !== address.toLowerCase()) {
+        console.error(`Signature verification failed: ${recoveredAddress.toLowerCase()} !== ${address.toLowerCase()}`);
+        return res.status(401).json({ error: 'Signature verification failed' });
+      }
+
+      console.log('Signature verified successfully');
+    } catch (error) {
+      console.error('Signature verification error:', error);
+      return res.status(401).json({ error: 'Invalid signature format: ' + error.message });
     }
 
     // Update wallet creation date if not set
@@ -75,21 +103,41 @@ router.post('/verify', async (req, res) => {
     await user.save();
 
     // Generate JWT token
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    // Log login activity (non-blocking)
+    try {
+      ActivityLogger.logActivity(
+        user,
+        'LOGIN',
+        'User logged in with wallet',
+        req,
+        { address: user.address }
+      ).catch(err => console.error('Error logging activity:', err));
+    } catch (logError) {
+      console.error('Error logging activity:', logError);
+      // Continue anyway since this is non-critical
+    }
 
     // Respond with token and user info
-    res.json({
+    return res.status(200).json({
       token,
       user: {
         address: user.address,
         username: user.username,
         points: user.points,
-        profilePic: user.profilePic
+        profilePic: user.profilePic,
+        walletCreation: user.walletCreation,
+        social: {
+          google: !!user.socialGoogle,
+          twitter: !!user.socialTwitter,
+          linkedin: !!user.socialLinkedin
+        }
       }
     });
   } catch (error) {
     console.error('Error in /auth/verify:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error', message: error.message });
   }
 });
 

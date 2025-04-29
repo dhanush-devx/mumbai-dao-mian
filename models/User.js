@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+mongoose.pluralize(null);
 
 const UserSchema = new mongoose.Schema({
   address: {

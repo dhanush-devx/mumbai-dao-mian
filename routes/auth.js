@@ -77,8 +77,8 @@ router.post('/verify', async (req, res) => {
     console.log(`Verifying signature for message: "${message}" from address: ${address}`);
 
     try {
-      // Recover the address from the signature
-      const recoveredAddress = ethers.utils.verifyMessage(message, signature);
+      // Recover the address from the signature using ethers v6 API
+      const recoveredAddress = ethers.verifyMessage(message, signature);
       console.log(`Recovered address: ${recoveredAddress}`);
 
       // Check if the recovered address matches the provided address
@@ -102,39 +102,50 @@ router.post('/verify', async (req, res) => {
     user.nonce = null;
     await user.save();
 
-    // Generate JWT token
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-    // Log login activity (non-blocking)
-    try {
-      ActivityLogger.logActivity(
-        user,
-        'LOGIN',
-        'User logged in with wallet',
-        req,
-        { address: user.address }
-      ).catch(err => console.error('Error logging activity:', err));
-    } catch (logError) {
-      console.error('Error logging activity:', logError);
-      // Continue anyway since this is non-critical
+    // Check if JWT_SECRET exists before trying to sign the token
+    if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET environment variable is not defined');
+      return res.status(500).json({ error: 'Server configuration error: JWT_SECRET is missing' });
     }
 
-    // Respond with token and user info
-    return res.status(200).json({
-      token,
-      user: {
-        address: user.address,
-        username: user.username,
-        points: user.points,
-        profilePic: user.profilePic,
-        walletCreation: user.walletCreation,
-        social: {
-          google: !!user.socialGoogle,
-          twitter: !!user.socialTwitter,
-          linkedin: !!user.socialLinkedin
-        }
+    // Generate JWT token
+    try {
+      const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      
+      // Log login activity (non-blocking)
+      try {
+        ActivityLogger.logActivity(
+          user,
+          'LOGIN',
+          'User logged in with wallet',
+          req,
+          { address: user.address }
+        ).catch(err => console.error('Error logging activity:', err));
+      } catch (logError) {
+        console.error('Error logging activity:', logError);
+        // Continue anyway since this is non-critical
       }
-    });
+
+      // Respond with token and user info
+      return res.status(200).json({
+        token,
+        user: {
+          address: user.address,
+          username: user.username,
+          points: user.points,
+          profilePic: user.profilePic,
+          walletCreation: user.walletCreation,
+          social: {
+            google: !!user.socialGoogle,
+            twitter: !!user.socialTwitter,
+            linkedin: !!user.socialLinkedin
+          }
+        }
+      });
+    } catch (jwtError) {
+      console.error('Error signing JWT token:', jwtError);
+      return res.status(500).json({ error: 'Failed to generate authentication token', details: jwtError.message });
+    }
   } catch (error) {
     console.error('Error in /auth/verify:', error);
     return res.status(500).json({ error: 'Internal server error', message: error.message });

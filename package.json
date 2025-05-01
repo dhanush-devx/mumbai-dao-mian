@@ -24,7 +24,6 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.14.0",
-    "moongoose": "^0.0.5",
     "node-cron": "^3.0.3"
   },
   "devDependencies": {

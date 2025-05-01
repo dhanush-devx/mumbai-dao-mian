@@ -1,233 +1,141 @@
-import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useUser, useClerk } from '@clerk/clerk-react'; 
-import mumbaiDAOLogo from '../assets/logo.svg'; // You'll need to add this logo file
+import { createContext, useState, useContext, useEffect } from 'react';
+import { ethers } from 'ethers';
 
-const Navbar = () => {
-  const { user, logout } = useAuth();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+const AuthContext = createContext();
 
-  const handleLogout = () => {
-    logout();
-    navigate('/');
+// API base URL - change this based on environment
+const API_URL = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000';
+
+export const useAuth = () => useContext(AuthContext);
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    // Check if user is already logged in
+    const checkAuth = async () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          const response = await fetch(`${API_URL}/main`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            setUser(data.user);
+          } else {
+            // Token invalid, clear it
+            console.log('Invalid token, clearing...');
+            localStorage.removeItem('token');
+          }
+        } catch (err) {
+          console.error('Auth check error:', err);
+          setError('Failed to authenticate');
+          localStorage.removeItem('token');
+        }
+      }
+      setLoading(false);
+    };
+    
+    checkAuth();
+  }, []);
+
+  const login = async (username) => {
+    setError(null);
+    
+    if (!window.ethereum) {
+      setError('Please install MetaMask to continue');
+      return false;
+    }
+
+    try {
+      // Request account access
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const address = accounts[0];
+      
+      console.log('Connected address:', address);
+      
+      // Get nonce
+      const nonceRes = await fetch(`${API_URL}/auth/nonce`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address, username })
+      });
+      
+      if (!nonceRes.ok) {
+        const errorData = await nonceRes.json();
+        setError(errorData.error || 'Failed to get login nonce');
+        return false;
+      }
+      
+      const nonceData = await nonceRes.json();
+      console.log('Received nonce:', nonceData.nonce);
+      
+      // Sign message using personal_sign method
+      const message = `Login nonce: ${nonceData.nonce}`;
+      
+      try {
+        const signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [message, address]
+        });
+        
+        console.log('Message signed, verifying...');
+        
+        // Verify signature
+        const verifyRes = await fetch(`${API_URL}/auth/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address, signature })
+        });
+        
+        if (!verifyRes.ok) {
+          const errText = await verifyRes.text();
+          try {
+            const errData = JSON.parse(errText);
+            setError(errData.error || 'Authentication failed');
+          } catch (e) {
+            setError(`Authentication failed: ${verifyRes.status} ${verifyRes.statusText}`);
+          }
+          console.error('Verification failed:', verifyRes.status, errText);
+          return false;
+        }
+        
+        const verifyData = await verifyRes.json();
+        console.log('Login successful!');
+        localStorage.setItem('token', verifyData.token);
+        setUser(verifyData.user);
+        return true;
+      } catch (signError) {
+        console.error('Error during message signing:', signError);
+        setError('Failed to sign message with MetaMask');
+        return false;
+      }
+    } catch (err) {
+      if (err.code === 4001) {
+        // User rejected request
+        setError('You must connect your wallet to continue');
+      } else {
+        console.error('Login error:', err);
+        setError('Authentication error: ' + (err.message || 'Unknown error'));
+      }
+      return false;
+    }
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    setUser(null);
   };
 
   return (
-    <nav className="bg-white shadow">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex">
-            <Link to="/" className="flex-shrink-0 flex items-center">
-              {/* Replace with your actual logo */}
-              <div className="h-8 w-8 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-md flex items-center justify-center text-white font-bold text-lg">
-                MD
-              </div>
-              <span className="ml-2 font-bold text-lg text-gray-800">Mumbai DAO</span>
-            </Link>
-            
-            <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              <Link 
-                to="/" 
-                className={`${
-                  location.pathname === '/' && !user
-                    ? 'border-indigo-500 text-gray-900' 
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
-              >
-                Home
-              </Link>
-              
-              {user && (
-                <>
-                  <Link 
-                    to="/dashboard" 
-                    className={`${
-                      location.pathname === '/dashboard' 
-                        ? 'border-indigo-500 text-gray-900' 
-                        : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                    } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
-                  >
-                    Dashboard
-                  </Link>
-                  <Link 
-                    to="/leaderboard" 
-                    className={`${
-                      location.pathname === '/leaderboard' 
-                        ? 'border-indigo-500 text-gray-900' 
-                        : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                    } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
-                  >
-                    Leaderboard
-                  </Link>
-                  <Link 
-                    to="/profile" 
-                    className={`${
-                      location.pathname === '/profile' 
-                        ? 'border-indigo-500 text-gray-900' 
-                        : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                    } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
-                  >
-                    Profile
-                  </Link>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="hidden sm:ml-6 sm:flex sm:items-center">
-            {user ? (
-              <div className="ml-3 relative flex items-center space-x-4">
-                <div className="text-right">
-                  <p className="text-sm font-medium text-gray-900">{user.username || 'Unnamed'}</p>
-                  <p className="text-xs text-gray-500">{user.points} points</p>
-                </div>
-                <Link to="/profile">
-                  {user.profilePic ? (
-                    <img className="h-8 w-8 rounded-full" src={user.profilePic} alt="" />
-                  ) : (
-                    <div className="h-8 w-8 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold">
-                      {user.username ? user.username[0].toUpperCase() : '?'}
-                    </div>
-                  )}
-                </Link>
-                <button
-                  onClick={handleLogout}
-                  className="ml-2 px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 rounded-md"
-                >
-                  Logout
-                </button>
-              </div>
-            ) : (
-              <div>
-                <Link
-                  to="/login"
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  Connect Wallet
-                </Link>
-              </div>
-            )}
-          </div>
-
-          {/* Mobile menu button */}
-          <div className="flex items-center sm:hidden">
-            <button 
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
-            >
-              <span className="sr-only">Open main menu</span>
-              {/* Icon for menu */}
-              <svg className={`${isMenuOpen ? 'hidden' : 'block'} h-6 w-6`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-              {/* Icon for close */}
-              <svg className={`${isMenuOpen ? 'block' : 'hidden'} h-6 w-6`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile menu */}
-      <div className={`${isMenuOpen ? 'block' : 'hidden'} sm:hidden`}>
-        <div className="pt-2 pb-3 space-y-1">
-          <Link 
-            to="/" 
-            className={`${
-              location.pathname === '/' && !user
-                ? 'bg-indigo-50 border-indigo-500 text-indigo-700' 
-                : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
-            } block pl-3 pr-4 py-2 border-l-4 text-base font-medium`}
-            onClick={() => setIsMenuOpen(false)}
-          >
-            Home
-          </Link>
-          
-          {user ? (
-            <>
-              <Link 
-                to="/dashboard" 
-                className={`${
-                  location.pathname === '/dashboard' 
-                    ? 'bg-indigo-50 border-indigo-500 text-indigo-700' 
-                    : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
-                } block pl-3 pr-4 py-2 border-l-4 text-base font-medium`}
-                onClick={() => setIsMenuOpen(false)}
-              >
-                Dashboard
-              </Link>
-              <Link 
-                to="/leaderboard" 
-                className={`${
-                  location.pathname === '/leaderboard' 
-                    ? 'bg-indigo-50 border-indigo-500 text-indigo-700' 
-                    : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
-                } block pl-3 pr-4 py-2 border-l-4 text-base font-medium`}
-                onClick={() => setIsMenuOpen(false)}
-              >
-                Leaderboard
-              </Link>
-              <Link 
-                to="/profile" 
-                className={`${
-                  location.pathname === '/profile' 
-                    ? 'bg-indigo-50 border-indigo-500 text-indigo-700' 
-                    : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
-                } block pl-3 pr-4 py-2 border-l-4 text-base font-medium`}
-                onClick={() => setIsMenuOpen(false)}
-              >
-                Profile
-              </Link>
-            </>
-          ) : (
-            <Link 
-              to="/login" 
-              className={`${
-                location.pathname === '/login' 
-                  ? 'bg-indigo-50 border-indigo-500 text-indigo-700' 
-                  : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
-              } block pl-3 pr-4 py-2 border-l-4 text-base font-medium`}
-              onClick={() => setIsMenuOpen(false)}
-            >
-              Connect Wallet
-            </Link>
-          )}
-        </div>
-        
-        {user && (
-          <div className="pt-4 pb-3 border-t border-gray-200">
-            <div className="flex items-center px-4">
-              {user.profilePic ? (
-                <img className="h-10 w-10 rounded-full" src={user.profilePic} alt="" />
-              ) : (
-                <div className="h-10 w-10 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center text-white font-bold">
-                  {user.username ? user.username[0].toUpperCase() : '?'}
-                </div>
-              )}
-              <div className="ml-3">
-                <div className="text-base font-medium text-gray-800">{user.username || 'Unnamed'}</div>
-                <div className="text-sm font-medium text-gray-500">{user.points} points</div>
-              </div>
-            </div>
-            <div className="mt-3 space-y-1">
-              <button
-                onClick={() => {
-                  setIsMenuOpen(false);
-                  handleLogout();
-                }}
-                className="block w-full text-left px-4 py-2 text-base font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-              >
-                Sign out
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </nav>
+    <AuthContext.Provider value={{ user, login, logout, loading, error }}>
+      {children}
+    </AuthContext.Provider>
   );
 };
 
-export default Navbar;
+export default AuthContext;

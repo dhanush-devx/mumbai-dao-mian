@@ -1,244 +1,44 @@
-import { useState, useEffect } from 'react';
+import { useUser, useClerk } from '@clerk/clerk-react';
+import { UserProfile } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 
 // API base URL - change this based on environment
 const API_URL = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000';
 
 const Profile = () => {
-  const { user, logout } = useAuth();
-  const [username, setUsername] = useState(user?.username || '');
-  const [usernameError, setUsernameError] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
+  const { user, isLoaded, isSignedIn } = useUser();
+  const { openUserProfile } = useClerk();
   const navigate = useNavigate();
 
-  // Social connection state
-  const [socialLoading, setSocialLoading] = useState({
-    google: false,
-    twitter: false,
-    linkedin: false,
-  });
-
-  // Mock social connection data for development/testing
-  const mockSocialData = {
-    google: { id: 'google-mock-id', provider: 'google', username: 'googleuser' },
-    twitter: { id: 'twitter-mock-id', provider: 'twitter', username: 'twitteruser' },
-    linkedin: { id: 'linkedin-mock-id', provider: 'linkedin', username: 'linkedinuser' }
-  };
-
-  useEffect(() => {
-    // Update username when user data changes
-    if (user?.username) {
-      setUsername(user.username);
-    }
-  }, [user]);
-
-  const handleUpdateUsername = async (e) => {
-    e.preventDefault();
-    if (username.trim() === '') {
-      setUsernameError('Username cannot be empty');
-      return;
-    }
-
-    setIsSaving(true);
-    setUsernameError('');
-
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/profile/username`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ username })
-      });
-
-      if (response.ok) {
-        setSuccessMessage('Username updated successfully');
-        setTimeout(() => setSuccessMessage(''), 3000);
-      } else {
-        const data = await response.json();
-        setUsernameError(data.error || 'Failed to update username');
-      }
-    } catch (error) {
-      setUsernameError('Network error. Please try again.');
-      console.error('Update username error:', error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleConnectSocial = async (provider) => {
-    try {
-      setSocialLoading(prev => ({ ...prev, [provider]: true }));
-      
-      // Use a mock userId because we don't have real Clerk users
-      // In a production app, this would be a real Clerk user ID
-      const userId = 'user-123';
-      const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${API_URL}/profile/connect-social`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ 
-          userId, 
-          provider,
-          // Always include mock data for fallback
-          mockData: mockSocialData[provider]
-        })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Social connection error:', errorData);
-        throw new Error(errorData.error || 'Server error');
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        // Update the Auth context user if needed (this should be handled by your auth context)
-        // For now, just show a success message
-        setSuccessMessage(`Successfully connected ${provider}!`);
-        
-        // Refresh user data if needed
-        // This depends on how your auth context works
-        
-        setTimeout(() => setSuccessMessage(''), 3000);
-      }
-    } catch (error) {
-      console.error('Social connection error:', error);
-      setUsernameError(`Failed to connect ${provider}: ${error.message}`);
-      setTimeout(() => setUsernameError(''), 5000);
-    } finally {
-      setSocialLoading(prev => ({ ...prev, [provider]: false }));
-    }
-  };
-
-  const handleLogout = () => {
-    logout();
-    navigate('/');
-  };
-
-  // If user isn't loaded yet or no user is logged in
-  if (!user) {
+  if (!isLoaded) {
     return (
-      <div className="flex justify-center items-center h-screen">
+      <div className="flex justify-center items-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
       </div>
     );
   }
 
-  return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-800">Your Profile</h2>
-        </div>
-        <div className="p-6">
-          {successMessage && (
-            <div className="mb-4 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
-              {successMessage}
-            </div>
-          )}
-          
-          {usernameError && (
-            <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-              {usernameError}
-            </div>
-          )}
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* User Details Section */}
-            <div className="md:col-span-2">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">User Details</h3>
-                <form onSubmit={handleUpdateUsername}>
-                  <div className="mb-4">
-                    <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
-                      Username
-                    </label>
-                    <input
-                      type="text"
-                      id="username"
-                      name="username"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md p-2 border"
-                    />
-                  </div>
-                  
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Wallet Address
-                    </label>
-                    <div className="bg-gray-100 p-2 rounded-md">
-                      <p className="text-sm text-gray-500 break-all">
-                        {user.address}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Wallet Age
-                    </label>
-                    <div className="bg-gray-100 p-2 rounded-md">
-                      <p className="text-sm text-gray-500">
-                        {user.walletCreation
-                          ? `${Math.floor((new Date() - new Date(user.walletCreation)) / (1000 * 60 * 60 * 24))} days`
-                          : 'Unknown'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <button
-                      type="submit"
-                      disabled={isSaving}
-                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                    >
-                      {isSaving ? 'Saving...' : 'Update Profile'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
+  if (!isSignedIn) {
+    navigate('/login');
+    return null;
+  }
 
-            {/* Points and Stats Section */}
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Stats</h3>
-              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-sm font-medium text-gray-500">Total Points</span>
-                  <span className="font-bold text-xl text-indigo-600">{user.points}</span>
-                </div>
-                <div className="h-2 w-full bg-gray-200 rounded-full mb-4">
-                  <div 
-                    className="h-2 bg-indigo-600 rounded-full" 
-                    style={{ width: `${Math.min(100, (user.points / 1000) * 100)}%` }}
-                  ></div>
-                </div>
-                <div className="text-xs text-gray-500 text-right">
-                  {user.points}/1000 points to next level
-                </div>
-              </div>
-            </div>
+  return (
+    <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <div className="px-4 py-6 sm:px-0">
+        <div className="border-4 border-dashed border-gray-200 rounded-lg p-4">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">Profile Settings</h2>
+            <button
+              onClick={() => openUserProfile()}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              Manage Social Connections
+            </button>
           </div>
 
-          {/* Social Connections Section */}
           <div className="mt-8">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Social Connections</h3>
-            <p className="text-sm text-gray-500 mb-4">
-              Connect your social accounts to earn additional points and verify your identity.
-              Each connected account gives you 100 points.
-            </p>
-            
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Connected Social Accounts</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Google */}
               <div className="border border-gray-200 rounded-lg p-4">
@@ -250,17 +50,16 @@ const Profile = () => {
                     <span className="font-medium">Google</span>
                   </div>
                   <div>
-                    {user?.social?.google ? (
+                    {user?.externalAccounts?.find(acc => acc.provider === 'oauth_google') ? (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                         Connected
                       </span>
                     ) : (
                       <button
-                        onClick={() => handleConnectSocial('google')}
-                        disabled={socialLoading.google}
-                        className="inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50 disabled:opacity-50"
+                        onClick={() => openUserProfile({ initialTab: 'connections' })}
+                        className="inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50"
                       >
-                        {socialLoading.google ? 'Connecting...' : 'Connect'}
+                        Connect
                       </button>
                     )}
                   </div>
@@ -277,17 +76,16 @@ const Profile = () => {
                     <span className="font-medium">Twitter</span>
                   </div>
                   <div>
-                    {user?.social?.twitter ? (
+                    {user?.externalAccounts?.find(acc => acc.provider === 'oauth_twitter') ? (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                         Connected
                       </span>
                     ) : (
                       <button
-                        onClick={() => handleConnectSocial('twitter')}
-                        disabled={socialLoading.twitter}
-                        className="inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50 disabled:opacity-50"
+                        onClick={() => openUserProfile({ initialTab: 'connections' })}
+                        className="inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50"
                       >
-                        {socialLoading.twitter ? 'Connecting...' : 'Connect'}
+                        Connect
                       </button>
                     )}
                   </div>
@@ -304,36 +102,21 @@ const Profile = () => {
                     <span className="font-medium">LinkedIn</span>
                   </div>
                   <div>
-                    {user?.social?.linkedin ? (
+                    {user?.externalAccounts?.find(acc => acc.provider === 'oauth_linkedin') ? (
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                         Connected
                       </span>
                     ) : (
                       <button
-                        onClick={() => handleConnectSocial('linkedin')}
-                        disabled={socialLoading.linkedin}
-                        className="inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50 disabled:opacity-50"
+                        onClick={() => openUserProfile({ initialTab: 'connections' })}
+                        className="inline-flex items-center px-3 py-1 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:border-blue-300 focus:shadow-outline-blue active:text-gray-800 active:bg-gray-50"
                       >
-                        {socialLoading.linkedin ? 'Connecting...' : 'Connect'}
+                        Connect
                       </button>
                     )}
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Account Actions */}
-          <div className="mt-8 pt-6 border-t border-gray-200">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Account Actions</h3>
-            
-            <div className="flex">
-              <button
-                onClick={handleLogout}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                Sign out
-              </button>
             </div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useUser, useClerk } from '@clerk/clerk-react'; 
 import mumbaiDAOLogo from '../assets/logo.svg'; // You'll need to add this logo file
 
 const Navbar = () => {

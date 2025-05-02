@@ -47,9 +47,15 @@ router.post('/connect-social', authMiddleware, async (req, res) => {
   try {
     // First try to use Clerk verification
     let socialAccount;
+    let providerKey = provider;
+    
+    // Handle OAuth prefix if present (oauth_google -> google)
+    if (provider.startsWith('oauth_')) {
+      providerKey = provider.substring(6);
+    }
     
     try {
-      socialAccount = await clerkService.verifySocialConnection(userId, provider);
+      socialAccount = await clerkService.verifySocialConnection(userId, providerKey);
     } catch (error) {
       console.error('Clerk API error:', error.message);
       // Fall back to mock data if provided
@@ -66,19 +72,21 @@ router.post('/connect-social', authMiddleware, async (req, res) => {
     }
 
     // Add 100 points for connecting social account if not already connected
-    const providerCapitalized = capitalize(provider);
+    const providerCapitalized = capitalize(providerKey);
     const socialField = `social${providerCapitalized}`;
     const isNewConnection = !req.user[socialField];
+    let pointsAdded = 0;
     
     if (isNewConnection) {
-      req.user.points += 100;
+      pointsAdded = 100;
+      req.user.points += pointsAdded;
     }
 
     // Update social info
-    req.user[socialField] = socialAccount.id;
+    req.user[socialField] = socialAccount.id || socialAccount.provider_user_id || 'connected';
 
     // Update profilePic if Twitter and user doesn't have one
-    if (provider === 'twitter' && socialAccount.username && !req.user.profilePic) {
+    if (providerKey === 'twitter' && socialAccount.username && !req.user.profilePic) {
       req.user.profilePic = `https://twivatar.glitch.me/${socialAccount.username}`;
     }
 
@@ -91,19 +99,22 @@ router.post('/connect-social', authMiddleware, async (req, res) => {
         'SOCIAL_CONNECT',
         `User connected their ${providerCapitalized} account`,
         req,
-        { provider, pointsEarned: 100 }
+        { provider: providerKey, pointsEarned: pointsAdded }
       );
     }
     
+    // Return detailed response with social connection status
     res.json({ 
       success: true, 
       social: {
         google: req.user.socialGoogle ? true : false,
         twitter: req.user.socialTwitter ? true : false,
         linkedin: req.user.socialLinkedin ? true : false
-      }, 
-      points: req.user.points, 
-      profilePic: req.user.profilePic 
+      },
+      points: req.user.points,
+      pointsAdded: pointsAdded,
+      profilePic: req.user.profilePic,
+      isNewConnection: isNewConnection
     });
   } catch (err) {
     console.error('Error connecting social account:', err);

@@ -1,5 +1,6 @@
-import { createContext, useState, useContext, useEffect } from 'react';
+import { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
+import { useUser, useAuth as useClerkAuth } from '@clerk/clerk-react';
 
 const AuthContext = createContext();
 
@@ -12,37 +13,102 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
+  // Get Clerk user status
+  const { isSignedIn, isLoaded: clerkLoaded } = useClerkAuth();
+  const { user: clerkUser } = useUser();
 
+  // Function to fetch user data from backend
+  const fetchUserData = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return false;
+
+    try {
+      const response = await fetch(`${API_URL}/main`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setUser(data.user);
+        // Store user in localStorage for persistence between refreshes
+        localStorage.setItem('user', JSON.stringify(data.user));
+        return true;
+      } else {
+        console.log('Invalid token, clearing...');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        return false;
+      }
+    } catch (err) {
+      console.error('Auth check error:', err);
+      setError('Failed to authenticate');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      return false;
+    }
+  }, []);
+
+  // Check auth status on initial load and when Clerk auth status changes
   useEffect(() => {
-    // Check if user is already logged in
     const checkAuth = async () => {
-      const token = localStorage.getItem('token');
-      if (token) {
+      // First try to load user from localStorage while API request is in progress
+      const cachedUser = localStorage.getItem('user');
+      if (cachedUser) {
         try {
-          const response = await fetch(`${API_URL}/main`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            setUser(data.user);
-          } else {
-            // Token invalid, clear it
-            console.log('Invalid token, clearing...');
-            localStorage.removeItem('token');
-          }
-        } catch (err) {
-          console.error('Auth check error:', err);
-          setError('Failed to authenticate');
-          localStorage.removeItem('token');
+          setUser(JSON.parse(cachedUser));
+        } catch (e) {
+          console.error('Failed to parse cached user', e);
         }
       }
+
+      // Check if we have a JWT token
+      const hasToken = await fetchUserData();
+      
+      // If no token but signed in with Clerk, try to authenticate with Clerk
+      if (!hasToken && isSignedIn && clerkUser) {
+        try {
+          console.log('Signed in with Clerk, getting user data...');
+          const clerkUserResponse = await fetch(`${API_URL}/auth/clerk-login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              clerkId: clerkUser.id,
+              email: clerkUser.primaryEmailAddress?.emailAddress,
+              username: clerkUser.username || clerkUser.firstName || `user_${clerkUser.id.substring(0, 8)}`
+            })
+          });
+
+          if (clerkUserResponse.ok) {
+            const data = await clerkUserResponse.json();
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('user', JSON.stringify(data.user));
+            setUser(data.user);
+          } else {
+            console.error('Failed to create/retrieve user from Clerk login');
+          }
+        } catch (err) {
+          console.error('Error during Clerk auth integration:', err);
+        }
+      }
+      
       setLoading(false);
     };
     
-    checkAuth();
-  }, []);
+    // Only check auth once Clerk has loaded
+    if (clerkLoaded) {
+      checkAuth();
+    }
+  }, [clerkLoaded, isSignedIn, clerkUser, fetchUserData]);
 
+  // Function to refresh user data without waiting for page reload
+  const refreshUserData = async () => {
+    setLoading(true);
+    await fetchUserData();
+    setLoading(false);
+  };
+
+  // Login with MetaMask wallet
   const login = async (username) => {
     setError(null);
     
@@ -107,6 +173,7 @@ export const AuthProvider = ({ children }) => {
         const verifyData = await verifyRes.json();
         console.log('Login successful!');
         localStorage.setItem('token', verifyData.token);
+        localStorage.setItem('user', JSON.stringify(verifyData.user));
         setUser(verifyData.user);
         return true;
       } catch (signError) {
@@ -128,11 +195,29 @@ export const AuthProvider = ({ children }) => {
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     setUser(null);
   };
 
+  // Update user data in context without full refresh
+  const updateUserData = (newData) => {
+    if (!user) return;
+    
+    const updatedUser = { ...user, ...newData };
+    setUser(updatedUser);
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, error }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      login, 
+      logout, 
+      loading, 
+      error, 
+      refreshUserData,
+      updateUserData 
+    }}>
       {children}
     </AuthContext.Provider>
   );

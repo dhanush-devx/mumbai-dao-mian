@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useUser, useClerk } from '@clerk/clerk-react'; 
+import { useUser } from '@clerk/clerk-react'; 
+import { useAuth } from '../context/AuthContext';
 import mumbaiDAOLogo from '../assets/logo.svg'; // You'll need to add this logo file
 
 const Navbar = () => {
@@ -8,6 +9,14 @@ const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [points, setPoints] = useState(0);
+
+  // Update points whenever user data changes
+  useEffect(() => {
+    if (user) {
+      setPoints(user.points || 0);
+    }
+  }, [user]);
 
   const handleLogout = () => {
     logout();
@@ -81,7 +90,16 @@ const Navbar = () => {
               <div className="ml-3 relative flex items-center space-x-4">
                 <div className="text-right">
                   <p className="text-sm font-medium text-gray-900">{user.username || 'Unnamed'}</p>
-                  <p className="text-xs text-gray-500">{user.points} points</p>
+                  <p className="text-xs text-gray-500 flex items-center">
+                    <span>{points}</span>
+                    <span className="ml-1">points</span>
+                    {/* Animation when points increase */}
+                    {user.points > points && points > 0 && (
+                      <span className="ml-1 text-green-600 font-semibold animate-bounce">
+                        +{user.points - points}
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <Link to="/profile">
                   {user.profilePic ? (
@@ -209,7 +227,15 @@ const Navbar = () => {
               )}
               <div className="ml-3">
                 <div className="text-base font-medium text-gray-800">{user.username || 'Unnamed'}</div>
-                <div className="text-sm font-medium text-gray-500">{user.points} points</div>
+                <div className="text-sm font-medium text-gray-500 flex items-center">
+                  <span>{points}</span>
+                  <span className="ml-1">points</span>
+                  {user.points > points && points > 0 && (
+                    <span className="ml-1 text-green-600 font-semibold animate-bounce">
+                      +{user.points - points}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <div className="mt-3 space-y-1">

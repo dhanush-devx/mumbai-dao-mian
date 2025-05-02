@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const ActivityLogger = require('../services/activityLogger');
 const ErrorHandler = require('../utils/errorHandler');
+const clerkService = require('../services/clerkService');
 
 // POST /auth/nonce - generate nonce for Metamask login challenge
 router.post('/nonce', async (req, res) => {
@@ -149,6 +150,109 @@ router.post('/verify', async (req, res) => {
   } catch (error) {
     console.error('Error in /auth/verify:', error);
     return res.status(500).json({ error: 'Internal server error', message: error.message });
+  }
+});
+
+// POST /auth/clerk-login - Handle Clerk SSO authentication
+router.post('/clerk-login', async (req, res) => {
+  try {
+    const { clerkId, email, username } = req.body;
+    
+    if (!clerkId) {
+      return res.status(400).json({ error: 'Clerk user ID is required' });
+    }
+
+    // Look for existing user with this clerkId
+    let user = await User.findOne({ clerkId });
+    
+    // If user not found by clerkId, check by email or username
+    if (!user && email) {
+      user = await User.findOne({ email });
+    }
+    
+    if (!user && username) {
+      user = await User.findOne({ username });
+    }
+    
+    // If still no user, create a new one
+    if (!user) {
+      // Check if username is already taken
+      if (username) {
+        const existingUser = await User.findOne({ username });
+        if (existingUser) {
+          // Generate a unique username
+          const uniqueUsername = `${username}_${Math.floor(Math.random() * 10000)}`;
+          user = await User.create({
+            clerkId,
+            email,
+            username: uniqueUsername,
+            walletCreation: new Date(),
+            address: `clerk_${clerkId.replace(/-/g, '')}`
+          });
+        } else {
+          user = await User.create({
+            clerkId,
+            email,
+            username,
+            walletCreation: new Date(),
+            address: `clerk_${clerkId.replace(/-/g, '')}`
+          });
+        }
+      } else {
+        // Create user with generated username
+        user = await User.create({
+          clerkId,
+          email,
+          username: `user_${Math.floor(Math.random() * 100000)}`,
+          walletCreation: new Date(),
+          address: `clerk_${clerkId.replace(/-/g, '')}`
+        });
+      }
+    } else {
+      // Update existing user with clerkId if not set
+      if (!user.clerkId) {
+        user.clerkId = clerkId;
+      }
+      
+      // Update email if not set
+      if (!user.email && email) {
+        user.email = email;
+      }
+      
+      await user.save();
+    }
+
+    // Generate JWT token
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    
+    // Log activity
+    await ActivityLogger.logActivity(
+      user,
+      'LOGIN',
+      'User logged in with social account',
+      req,
+      { provider: 'clerk' }
+    );
+    
+    // Return the user data and token
+    return res.status(200).json({
+      token,
+      user: {
+        address: user.address,
+        username: user.username,
+        points: user.points,
+        profilePic: user.profilePic,
+        walletCreation: user.walletCreation,
+        social: {
+          google: !!user.socialGoogle,
+          twitter: !!user.socialTwitter,
+          linkedin: !!user.socialLinkedin
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error in /auth/clerk-login:', error);
+    return res.status(500).json({ error: 'Server error', details: error.message });
   }
 });
 
